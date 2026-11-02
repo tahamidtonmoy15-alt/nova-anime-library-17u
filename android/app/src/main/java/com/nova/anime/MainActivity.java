@@ -115,7 +115,15 @@ public class MainActivity extends Activity {
                 if (fileCallback != null) fileCallback.cancel();
                 fileCallback = new ValueCallbackHolder(callback);
                 pendingVideoWebPicker = isVideoChooser(params);
-                Intent intent = params.createIntent();
+                Intent intent;
+                if (pendingVideoWebPicker) {
+                    intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    intent.setType("video/*");
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                } else {
+                    intent = params.createIntent();
+                }
                 try { startActivityForResult(intent, PICK_WEB_FILE); }
                 catch (Exception e) { fileCallback.cancel(); fileCallback = null; Toast.makeText(MainActivity.this, "No file picker available", Toast.LENGTH_SHORT).show(); }
                 return true;
@@ -323,16 +331,15 @@ public class MainActivity extends Activity {
         if (requestCode == PICK_WEB_FILE) {
             if (fileCallback != null) {
                 Uri[] result = (resultCode == RESULT_OK && data != null && data.getData() != null) ? new Uri[]{data.getData()} : null;
-                fileCallback.complete(result);
-                fileCallback = null;
-                if (result != null && result.length > 0) {
+                boolean wasVideoPicker = pendingVideoWebPicker;
+                if (result != null && result.length > 0 && wasVideoPicker) {
                     Uri selected = result[0];
-                    if (pendingVideoWebPicker) {
-                        lastPickedVideoUri = selected;
-                        try { getContentResolver().takePersistableUriPermission(selected, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
-                    }
+                    lastPickedVideoUri = selected;
+                    try { getContentResolver().takePersistableUriPermission(selected, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
                 }
                 pendingVideoWebPicker = false;
+                fileCallback.complete(result);
+                fileCallback = null;
             }
             return;
         }
