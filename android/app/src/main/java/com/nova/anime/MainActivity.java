@@ -356,6 +356,7 @@ public class MainActivity extends Activity {
         if (mediaPlayer != null) mediaPlayer.pause();
         if (mediaPlayer != null) { mediaPlayer.detachViews(); }
         videoLayout = null;
+        if (webView != null) { webView.removeJavascriptInterface("NovaAndroid"); webView.destroy(); webView = null; }
         buildHome();
     }
 
@@ -402,6 +403,25 @@ public class MainActivity extends Activity {
     private String formatTime(long millis) {
         long seconds = Math.max(0, millis / 1000);
         return String.format(Locale.getDefault(), "%02d:%02d", seconds / 60, seconds % 60);
+    }
+
+    private class NovaBridge {
+        @JavascriptInterface public void registerEpisodeVideo(String key) {
+            if (key == null || key.trim().isEmpty()) return;
+            Uri picked = lastPickedVideoUri;
+            if (picked == null) return;
+            mediaPrefs().edit().putString(episodePrefKey(key), picked.toString()).apply();
+            lastPickedVideoUri = null;
+        }
+        @JavascriptInterface public boolean playEpisodeVideo(String key) {
+            if (key == null || key.trim().isEmpty()) return false;
+            runOnUiThread(() -> openEpisodeInVlc(key));
+            return true;
+        }
+        @JavascriptInterface public void forgetEpisodeVideo(String key) {
+            if (key == null || key.trim().isEmpty()) return;
+            mediaPrefs().edit().remove(episodePrefKey(key)).apply();
+        }
     }
 
     private static class ValueCallbackHolder {
