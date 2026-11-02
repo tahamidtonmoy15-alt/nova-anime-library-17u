@@ -454,12 +454,13 @@ public class MainActivity extends Activity {
     }
 
     private class NovaBridge {
-        @JavascriptInterface public void registerEpisodeVideo(String key) {
-            if (key == null || key.trim().isEmpty()) return;
+        @JavascriptInterface public boolean registerEpisodeVideo(String key) {
+            if (key == null || key.trim().isEmpty()) return false;
             Uri picked = lastPickedVideoUri;
-            if (picked == null) return;
+            if (picked == null) return false;
             mediaPrefs().edit().putString(episodePrefKey(key), picked.toString()).apply();
             lastPickedVideoUri = null;
+            return true;
         }
         @JavascriptInterface public boolean playEpisodeVideo(String key) {
             if (key == null || key.trim().isEmpty()) return false;
