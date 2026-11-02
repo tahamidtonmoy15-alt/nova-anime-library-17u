@@ -1,0 +1,15 @@
+NOVA — GitHub Pages Upload
+
+১) ZIP Extract করুন।
+২) Extract করা NOVA_GITHUB_UPLOAD ফোল্ডারের ভেতরের সব ফাইল সিলেক্ট করুন।
+৩) আপনার আগের public repository nova-anime-library খুলুন।
+৪) Add file → Upload files নির্বাচন করুন।
+৫) ফোল্ডারের ভেতরের সব ফাইল repository root-এ upload করুন (ফোল্ডারটিকে nested folder হিসেবে নয়)।
+৬) Commit changes দিন।
+৭) Settings → Pages → Deploy from a branch → main → /(root) → Save।
+৮) Deployment শেষ হলে আগের NOVA GitHub Pages URL Chrome-এ খুলুন।
+
+গুরুত্বপূর্ণ:
+- এটি GitHub Pages-এর Web/PWA source package, Android Studio project বা APK নয়।
+- আগের repository-র ফাইল replace করার আগে প্রয়োজনীয় পুরোনো ফাইলের backup রাখুন।
+- এই package-এ থাকা index.html, manifest, service worker এবং media assets একই root-এ রাখতে হবে।
