@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - feature/nova-vlc-reels-upgrade
+      - main
     paths:
       - 'android/**'
       - '.github/workflows/android-apk.yml'
