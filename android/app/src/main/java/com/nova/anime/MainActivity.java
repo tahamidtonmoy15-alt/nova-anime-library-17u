@@ -44,7 +44,7 @@ public class MainActivity extends Activity {
     private WebView webView;
     private ValueCallbackHolder fileCallback;
     private boolean pendingVideoWebPicker = false;
-    private Uri lastPickedVideoUri = null;
+    private volatile Uri lastPickedVideoUri = null;
     private String pendingEpisodeKey = null;
     private LibVLC libVLC;
     private MediaPlayer mediaPlayer;
@@ -155,8 +155,12 @@ public class MainActivity extends Activity {
         if (params == null || params.getAcceptTypes() == null) return false;
         for (String type : params.getAcceptTypes()) {
             if (type == null) continue;
-            String value = type.toLowerCase(Locale.ROOT);
-            if (value.contains("video") || value.contains(".mkv") || value.contains(".mp4") || value.contains(".avi") || value.contains(".mov")) return true;
+            String value = type.toLowerCase(Locale.ROOT).replace(" ", "");
+            for (String part : value.split(",")) {
+                String mime = part.split(";")[0];
+                if (mime.startsWith("video/") || mime.equals(".mkv") || mime.equals(".mp4")
+                        || mime.equals(".avi") || mime.equals(".mov") || mime.equals(".webm")) return true;
+            }
         }
         return false;
     }
@@ -205,7 +209,10 @@ public class MainActivity extends Activity {
                 case org.videolan.libvlc.MediaPlayer.Event.Paused: playerStatus.setText("Paused"); break;
                 case org.videolan.libvlc.MediaPlayer.Event.Stopped: playerStatus.setText("Playback stopped"); break;
                 case org.videolan.libvlc.MediaPlayer.Event.EndReached: playerStatus.setText("Episode finished"); break;
-                case org.videolan.libvlc.MediaPlayer.Event.EncounteredError: playerStatus.setText("This file could not be decoded by VLC. Try another copy or format."); break;
+                case org.videolan.libvlc.MediaPlayer.Event.EncounteredError:
+                    playerStatus.setText("VLC could not decode this file. Try another copy or MP4 (H.264/AAC).");
+                    Toast.makeText(MainActivity.this, "Video decoding failed. Try a different copy or MP4 (H.264/AAC).", Toast.LENGTH_LONG).show();
+                    break;
                 default: break;
             }
         }));
@@ -303,9 +310,21 @@ public class MainActivity extends Activity {
             ensureVlc();
             buildPlayerUi();
             if (saved != null) {
+                Uri uri = Uri.parse(saved);
+                // Validate the stored grant before handing it to VLC. This catches removed
+                // files and revoked Android document permissions instead of leaving a black screen.
+                try (android.os.ParcelFileDescriptor probe = getContentResolver().openFileDescriptor(uri, "r")) {
+                    if (probe == null) throw new IllegalStateException("The selected video file is no longer available.");
+                } catch (Exception accessError) {
+                    mediaPrefs().edit().remove(episodePrefKey(key)).apply();
+                    saved = null;
+                    playerStatus.setText("The original file permission expired. Select the episode file again.");
+                }
+            }
+            if (saved != null) {
                 playNativeUri(Uri.parse(saved));
             } else {
-                playerStatus.setText("Link this saved episode to its original phone file once.");
+                playerStatus.setText("Select the original video file for this episode once. It will be linked to this episode.");
                 pendingEpisodeKey = key;
                 chooseVideo();
             }
@@ -335,7 +354,9 @@ public class MainActivity extends Activity {
             handler.removeCallbacks(progressUpdater);
             handler.post(progressUpdater);
         } catch (Exception error) {
-            if (playerStatus != null) playerStatus.setText("Could not play this file: " + error.getMessage());
+            if (playerStatus != null) playerStatus.setText("Could not open video: " + error.getMessage());
+            android.util.Log.e("NOVA", "LibVLC failed to open " + uri, error);
+            Toast.makeText(this, "Could not open this video file. Try selecting it again.", Toast.LENGTH_LONG).show();
         }
     }
 
@@ -347,8 +368,14 @@ public class MainActivity extends Activity {
                 boolean wasVideoPicker = pendingVideoWebPicker;
                 if (result != null && result.length > 0 && wasVideoPicker) {
                     Uri selected = result[0];
+                    // Keep the URI selected by Android's document picker; the JS upload callback
+                    // immediately registers it against the exact anime/season/episode key.
                     lastPickedVideoUri = selected;
-                    try { getContentResolver().takePersistableUriPermission(selected, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
+                    try {
+                        getContentResolver().takePersistableUriPermission(selected, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    } catch (Exception permissionError) {
+                        android.util.Log.w("NOVA", "Persistable video permission unavailable", permissionError);
+                    }
                 }
                 pendingVideoWebPicker = false;
                 fileCallback.complete(result);
@@ -358,8 +385,9 @@ public class MainActivity extends Activity {
         }
         if (requestCode != PICK_VIDEO) return;
         if (resultCode != RESULT_OK || data == null || data.getData() == null) {
-            if (playerStatus != null) playerStatus.setText("No video selected. Return to NOVA and try again.");
             pendingEpisodeKey = null;
+            Toast.makeText(this, "No video selected. Choose the episode file to start playback.", Toast.LENGTH_LONG).show();
+            returnHome();
             return;
         }
         Uri uri = data.getData();
