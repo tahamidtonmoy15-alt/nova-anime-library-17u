@@ -10,7 +10,6 @@ import android.provider.OpenableColumns;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -96,13 +95,13 @@ public class MainActivity extends Activity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-        settings.setMediaPlaybackRequiresUserGesture(true);
+        // Episode playback starts after async media inspection; allow WebView playback from that flow.
+        settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
         settings.setLoadsImagesAutomatically(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         webView.setBackgroundColor(Color.rgb(8, 3, 17));
-        webView.addJavascriptInterface(new NovaBridge(), "NovaAndroid");
         webView.setWebChromeClient(new WebChromeClient() {
             @Override public boolean onShowFileChooser(WebView view, android.webkit.ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (fileCallback != null) fileCallback.cancel();
@@ -126,19 +125,8 @@ public class MainActivity extends Activity {
         });
         shell.addView(webView, new LinearLayout.LayoutParams(-1, 0, 1f));
 
-        LinearLayout bottom = new LinearLayout(this);
-        bottom.setGravity(Gravity.CENTER_VERTICAL);
-        bottom.setPadding(dp(10), dp(6), dp(10), dp(6));
-        bottom.setBackgroundColor(Color.rgb(18, 8, 32));
-        Button refresh = makeButton("Reload");
-        refresh.setOnClickListener(v -> webView.reload());
-        Button vlc = makeButton("Open local video · VLC");
-        vlc.setOnClickListener(v -> openVlcPlayer());
-        bottom.addView(refresh, new LinearLayout.LayoutParams(0, dp(48), 1f));
-        LinearLayout.LayoutParams vlcParams = new LinearLayout.LayoutParams(0, dp(48), 2f);
-        vlcParams.leftMargin = dp(8);
-        bottom.addView(vlc, vlcParams);
-        shell.addView(bottom, new LinearLayout.LayoutParams(-1, dp(60)));
+        // Keep the NOVA web app full-height. Native debug controls previously covered
+        // the bottom of the episode UI and duplicated the in-app video player.
         root.addView(shell, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
         webView.loadUrl(NOVA_URL);
@@ -350,10 +338,6 @@ public class MainActivity extends Activity {
     private String formatTime(long millis) {
         long seconds = Math.max(0, millis / 1000);
         return String.format(Locale.getDefault(), "%02d:%02d", seconds / 60, seconds % 60);
-    }
-
-    private class NovaBridge {
-        @JavascriptInterface public void openVlcPlayer() { runOnUiThread(() -> openVlcPlayer()); }
     }
 
     private static class ValueCallbackHolder {
