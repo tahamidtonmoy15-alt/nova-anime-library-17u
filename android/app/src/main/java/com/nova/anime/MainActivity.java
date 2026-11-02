@@ -10,6 +10,7 @@ import android.provider.OpenableColumns;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -29,16 +30,22 @@ import org.videolan.libvlc.util.VLCVideoLayout;
 
 import java.util.ArrayList;
 import java.util.Locale;
+import android.content.SharedPreferences;
 
 public class MainActivity extends Activity {
     private static final int PICK_VIDEO = 4102;
     private static final int PICK_WEB_FILE = 4103;
+    private static final String PREFS_NAME = "nova_episode_media";
+    private static final String PREF_PREFIX = "episode_uri:";
     private static final String NOVA_URL = "https://tahamidtonmoy15-alt.github.io/nova-anime-library-17u/";
     private static final String LEGACY_NOVA_URL = "https://cdtc1127l-cmyk.github.io/anime-f/";
 
     private FrameLayout root;
     private WebView webView;
     private ValueCallbackHolder fileCallback;
+    private boolean pendingVideoWebPicker = false;
+    private Uri lastPickedVideoUri = null;
+    private String pendingEpisodeKey = null;
     private LibVLC libVLC;
     private MediaPlayer mediaPlayer;
     private VLCVideoLayout videoLayout;
@@ -102,10 +109,12 @@ public class MainActivity extends Activity {
         settings.setLoadsImagesAutomatically(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         webView.setBackgroundColor(Color.rgb(8, 3, 17));
+        webView.addJavascriptInterface(new NovaBridge(), "NovaAndroid");
         webView.setWebChromeClient(new WebChromeClient() {
             @Override public boolean onShowFileChooser(WebView view, android.webkit.ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (fileCallback != null) fileCallback.cancel();
                 fileCallback = new ValueCallbackHolder(callback);
+                pendingVideoWebPicker = isVideoChooser(params);
                 Intent intent = params.createIntent();
                 try { startActivityForResult(intent, PICK_WEB_FILE); }
                 catch (Exception e) { fileCallback.cancel(); fileCallback = null; Toast.makeText(MainActivity.this, "No file picker available", Toast.LENGTH_SHORT).show(); }
@@ -114,8 +123,10 @@ public class MainActivity extends Activity {
         });
         webView.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                String url = request.getUrl().toString();
-                if (url.startsWith("https://") || url.startsWith("http://")) return false;
+                Uri uri = request.getUrl();
+                String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
+                if ("tahamidtonmoy15-alt.github.io".equals(host) || "cdtc1127l-cmyk.github.io".equals(host)) return false;
+                try { startActivity(new Intent(Intent.ACTION_VIEW, uri)); } catch (Exception ignored) { }
                 return true;
             }
             @Override public void onReceivedError(WebView view, android.webkit.WebResourceRequest request, android.webkit.WebResourceError error) {
@@ -132,7 +143,7 @@ public class MainActivity extends Activity {
         webView.loadUrl(NOVA_URL);
     }
 
-    private void showLoadError() {
+    private boolean isVideoChooser(WebChromeClient.FileChooserParams params) {\n        if (params == null || params.getAcceptTypes() == null) return false;\n        for (String type : params.getAcceptTypes()) {\n            if (type == null) continue;\n            String value = type.toLowerCase(Locale.ROOT);\n            if (value.contains("video") || value.contains(".mkv") || value.contains(".mp4") || value.contains(".avi") || value.contains(".mov")) return true;\n        }\n        return false;\n    }\n\n    private SharedPreferences mediaPrefs() { return getSharedPreferences(PREFS_NAME, MODE_PRIVATE); }\n    private String episodePrefKey(String key) { return PREF_PREFIX + key; }\n\n    private void showLoadError() {
         if (isFinishing() || webView == null) return;
         // Keep the native reload action visible; offer the previously used NOVA Pages URL as a fallback.
         webView.post(() -> {
@@ -164,6 +175,19 @@ public class MainActivity extends Activity {
         options.add("--no-skip-frames");
         libVLC = new LibVLC(this, options);
         mediaPlayer = new MediaPlayer(libVLC);
+        mediaPlayer.setEventListener(event -> runOnUiThread(() -> {
+            if (playerStatus == null) return;
+            switch (event.type) {
+                case org.videolan.libvlc.MediaPlayer.Event.Opening: playerStatus.setText("Opening video…"); break;
+                case org.videolan.libvlc.MediaPlayer.Event.Buffering: playerStatus.setText("Buffering…"); break;
+                case org.videolan.libvlc.MediaPlayer.Event.Playing: playerStatus.setText("Playing"); break;
+                case org.videolan.libvlc.MediaPlayer.Event.Paused: playerStatus.setText("Paused"); break;
+                case org.videolan.libvlc.MediaPlayer.Event.Stopped: playerStatus.setText("Playback stopped"); break;
+                case org.videolan.libvlc.MediaPlayer.Event.EndReached: playerStatus.setText("Episode finished"); break;
+                case org.videolan.libvlc.MediaPlayer.Event.EncounteredError: playerStatus.setText("This file could not be decoded by VLC. Try another copy or format."); break;
+                default: break;
+            }
+        }));
     }
 
     private void buildPlayerUi() {
@@ -252,23 +276,30 @@ public class MainActivity extends Activity {
         startActivityForResult(intent, PICK_VIDEO);
     }
 
-    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == PICK_WEB_FILE) {
-            if (fileCallback != null) {
-                Uri[] result = (resultCode == RESULT_OK && data != null && data.getData() != null) ? new Uri[]{data.getData()} : null;
-                fileCallback.complete(result);
-                fileCallback = null;
+    private void openEpisodeInVlc(String key) {
+        String saved = mediaPrefs().getString(episodePrefKey(key), null);
+        try {
+            ensureVlc();
+            buildPlayerUi();
+            if (saved != null) {
+                playNativeUri(Uri.parse(saved));
+            } else {
+                playerStatus.setText("Link this saved episode to its original phone file once.");
+                pendingEpisodeKey = key;
+                chooseVideo();
             }
-            return;
+        } catch (Exception e) {
+            Toast.makeText(this, "NOVA player could not start: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            if (showingPlayer) returnHome();
         }
-        if (requestCode != PICK_VIDEO || resultCode != RESULT_OK || data == null || data.getData() == null) return;
-        Uri uri = data.getData();
-        try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
+    }
+
+    private void playNativeUri(Uri uri) {
         try {
             ensureVlc();
             if (!showingPlayer) buildPlayerUi();
             Media media = new Media(libVLC, uri);
+            media.addOption(":network-caching=1200");
             mediaPlayer.setMedia(media);
             media.release();
             mediaPlayer.play();
@@ -279,12 +310,45 @@ public class MainActivity extends Activity {
                     if (col >= 0) name = cursor.getString(col);
                 }
             } catch (Exception ignored) { }
-            playerStatus.setText("Playing: " + name);
+            if (playerStatus != null) playerStatus.setText("Playing in NOVA: " + name);
             handler.removeCallbacks(progressUpdater);
             handler.post(progressUpdater);
         } catch (Exception error) {
             if (playerStatus != null) playerStatus.setText("Could not play this file: " + error.getMessage());
         }
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PICK_WEB_FILE) {
+            if (fileCallback != null) {
+                Uri[] result = (resultCode == RESULT_OK && data != null && data.getData() != null) ? new Uri[]{data.getData()} : null;
+                fileCallback.complete(result);
+                fileCallback = null;
+                if (result != null && result.length > 0) {
+                    Uri selected = result[0];
+                    if (pendingVideoWebPicker) {
+                        lastPickedVideoUri = selected;
+                        try { getContentResolver().takePersistableUriPermission(selected, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
+                    }
+                }
+                pendingVideoWebPicker = false;
+            }
+            return;
+        }
+        if (requestCode != PICK_VIDEO) return;
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) {
+            if (playerStatus != null) playerStatus.setText("No video selected. Return to NOVA and try again.");
+            pendingEpisodeKey = null;
+            return;
+        }
+        Uri uri = data.getData();
+        try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
+        if (pendingEpisodeKey != null) {
+            mediaPrefs().edit().putString(episodePrefKey(pendingEpisodeKey), uri.toString()).apply();
+            pendingEpisodeKey = null;
+        }
+        playNativeUri(uri);
     }
 
     private void returnHome() {
