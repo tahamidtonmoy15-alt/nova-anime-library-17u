@@ -571,6 +571,7 @@ body.reels-view .reel-media video{object-fit:contain;background:#05030b}
 body.reels-view .reel-media:after{content:"";position:absolute;inset:35% 0 0;pointer-events:none;background:linear-gradient(transparent,rgba(0,0,0,.78))}
 body.reels-view .reel-overlay{display:none}
 body.reels-view .reel-meta{position:absolute;z-index:2;left:14px;right:86px;bottom:max(24px,env(safe-area-inset-bottom));padding:0;color:#fff;text-shadow:0 2px 12px #000}
+body.reels-view .reel-creator{display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:13px}body.reels-view .reel-creator button{font-size:11px;padding:5px 12px;border-radius:999px;background:#fff;color:#111;border:0}body.reels-view .reel-creator button.is-on{background:rgba(255,255,255,.16);color:#fff}
 body.reels-view .reel-caption{font-size:14px;margin:0 0 7px}
 body.reels-view .reel-tags{font-size:12px;color:#c4f6ff}
 body.reels-view .reel-actions{position:absolute;z-index:3;right:12px;bottom:max(28px,env(safe-area-inset-bottom));width:58px;display:flex;flex-direction:column;align-items:center;gap:17px;margin:0}
@@ -1131,9 +1132,9 @@ async function renderReels(){
  feed.innerHTML=rows.map(r=>{
   const u=URL.createObjectURL(r.blob);reelUrls.push(u);
   return '<article class="reel-card" data-reel-id="'+esc(r.id)+'">'+
-   '<div class="reel-media"><video src="'+u+'" playsinline webkit-playsinline preload="metadata" muted loop></video></div>'+
+   '<div class="reel-media"><video src="'+u+'" playsinline webkit-playsinline preload="metadata" muted loop onclick="toggleReelPlayback(this)"></video></div>'+
    '<div class="reel-topbar"><button onclick="switchView(\'home\')" aria-label="Back">‹</button><button onclick="openReelAdd()" aria-label="Upload Reel">＋</button></div>'+
-   '<div class="reel-meta"><p class="reel-caption">'+esc(r.caption||r.name||'Anime Reel')+'</p>'+(r.tags?'<div class="reel-tags">'+esc(r.tags)+'</div>':'')+'<div class="reel-category">'+esc(r.category||'Anime')+'</div></div>'+
+   '<div class="reel-meta"><div class="reel-creator"><b>NOVA Anime</b><button data-action="follow" class="'+(localStorage.getItem('novaReelFollowed')==='1'?'is-on':'')+'" onclick="toggleReelFollow(this)">Follow</button></div><p class="reel-caption">'+esc(r.caption||r.name||'Anime Reel')+'</p>'+(r.tags?'<div class="reel-tags">'+esc(r.tags)+'</div>':'')+'<div class="reel-category">'+esc(r.category||'Anime')+'</div></div>'+
    '<div class="reel-actions">'+
     '<button data-action="like" class="'+(r.liked?'is-on':'')+'" aria-label="Like" onclick="toggleReelFlag(\''+esc(r.id)+'\',\'liked\')">'+(r.liked?'Liked':'Like')+'</button>'+
     '<button data-action="comment" aria-label="Comment" onclick="commentReel(\''+esc(r.id)+'\')">Comment</button>'+
@@ -1173,7 +1174,9 @@ async function shareReel(id){
  try{if(navigator.share)await navigator.share(data);else if(navigator.clipboard){await navigator.clipboard.writeText(data.text);toast('Caption copied.');}else toast('Sharing is not supported in this browser.');}
  catch(e){if(e&&e.name!=='AbortError')toast('Could not share this Reel.');}
 }
-async function toggleReelFlag(id,field){try{await openMediaDB();const store=mediaDB.transaction('reels','readwrite').objectStore('reels'),r=await new Promise((resolve,reject)=>{const q=store.get(id);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});if(!r)return;r[field]=!r[field];await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('reels','readwrite');tx.objectStore('reels').put(r);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});await renderReels();}catch(e){toast('Could not update Reel.');}}
+async function toggleReelFlag(id,field){try{await openMediaDB();const r=reelRowsCache.find(x=>x.id===id);if(!r)return;r[field]=!r[field];await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('reels','readwrite');tx.objectStore('reels').put(r);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});const card=document.querySelector('[data-reel-id="'+CSS.escape(id)+'"]');const button=card&&card.querySelector('[data-action="'+(field==='liked'?'like':'save')+'"]');if(button){button.classList.toggle('is-on',!!r[field]);button.textContent=field==='liked'?(r[field]?'Liked':'Like'):(r[field]?'Saved':'Save');}toast(field==='liked'?(r[field]?'Added to Likes':'Removed from Likes'):(r[field]?'Saved':'Removed from Saved'));}catch(e){toast('Could not update Reel.');}}
+function toggleReelFollow(button){const next=localStorage.getItem('novaReelFollowed')!=='1';localStorage.setItem('novaReelFollowed',next?'1':'0');button.classList.toggle('is-on',next);button.textContent=next?'Following':'Follow';toast(next?'Following NOVA Anime on this device':'Unfollowed NOVA Anime');}
+function toggleReelPlayback(video){if(!video)return;if(video.paused)video.play().catch(()=>{});else video.pause();}
 async function deleteAnimeReel(id){const r=reelRowsCache.find(x=>x.id===id);if(!r)return;if(!confirm('Permanently delete this Reel from NOVA? Its '+formatBytes(r.size||0)+' storage will be freed.'))return;try{await openMediaDB();await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('reels','readwrite');tx.objectStore('reels').delete(id);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});await renderReels();toast('Reel deleted from NOVA storage.');}catch(e){toast('Could not delete this Reel.');}}
 
 // Offline PWA + IndexedDB video vault. Files are copied into browser storage.
