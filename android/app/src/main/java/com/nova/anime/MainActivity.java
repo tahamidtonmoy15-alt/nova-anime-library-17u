@@ -151,7 +151,20 @@ public class MainActivity extends Activity {
         webView.loadUrl(NOVA_URL);
     }
 
-    private boolean isVideoChooser(WebChromeClient.FileChooserParams params) {\n        if (params == null || params.getAcceptTypes() == null) return false;\n        for (String type : params.getAcceptTypes()) {\n            if (type == null) continue;\n            String value = type.toLowerCase(Locale.ROOT);\n            if (value.contains("video") || value.contains(".mkv") || value.contains(".mp4") || value.contains(".avi") || value.contains(".mov")) return true;\n        }\n        return false;\n    }\n\n    private SharedPreferences mediaPrefs() { return getSharedPreferences(PREFS_NAME, MODE_PRIVATE); }\n    private String episodePrefKey(String key) { return PREF_PREFIX + key; }\n\n    private void showLoadError() {
+    private boolean isVideoChooser(WebChromeClient.FileChooserParams params) {
+        if (params == null || params.getAcceptTypes() == null) return false;
+        for (String type : params.getAcceptTypes()) {
+            if (type == null) continue;
+            String value = type.toLowerCase(Locale.ROOT);
+            if (value.contains("video") || value.contains(".mkv") || value.contains(".mp4") || value.contains(".avi") || value.contains(".mov")) return true;
+        }
+        return false;
+    }
+
+    private SharedPreferences mediaPrefs() { return getSharedPreferences(PREFS_NAME, MODE_PRIVATE); }
+    private String episodePrefKey(String key) { return PREF_PREFIX + key; }
+
+    private void showLoadError() {
         if (isFinishing() || webView == null) return;
         // Keep the native reload action visible; offer the previously used NOVA Pages URL as a fallback.
         webView.post(() -> {
