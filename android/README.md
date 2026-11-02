@@ -18,3 +18,5 @@ The debug APK is created at `app/build/outputs/apk/debug/app-debug.apk`.
 - The current web Reels collection remains local to the browser/PWA. The native player currently opens videos selected from the phone.
 - Codec support depends on the media stream and device hardware; no player can promise every file will play.
 - Before distributing an app containing LibVLC, review VideoLAN's licensing requirements and the app's distribution obligations.
+
+The CI build uses the Android SDK preinstalled on GitHub-hosted Ubuntu runners.
