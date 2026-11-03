@@ -1,0 +1,57 @@
+name: NOVA v1.4.0 Full Source ZIP
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - '**'
+      - '.github/workflows/source-zip.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nova-source-zip-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package-source:
+    name: Package complete NOVA source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare full source package
+        shell: bash
+        run: |
+          mkdir -p NOVA-v1.4.0-FULL-SOURCE
+          rsync -a ./ NOVA-v1.4.0-FULL-SOURCE/ \
+            --exclude='.git/' \
+            --exclude='**/.gradle/' \
+            --exclude='**/build/' \
+            --exclude='**/.idea/' \
+            --exclude='*.apk' \
+            --exclude='*.aab' \
+            --exclude='*.jks' \
+            --exclude='*.keystore' \
+            --exclude='NOVA-v1.4.0-FULL-SOURCE/'
+
+          test -s NOVA-v1.4.0-FULL-SOURCE/index.html
+          test -s NOVA-v1.4.0-FULL-SOURCE/android/app/src/main/java/com/nova/anime/MainActivity.kt
+          test -s NOVA-v1.4.0-FULL-SOURCE/android/app/src/main/java/com/nova/anime/NativeVideoStore.kt
+          test -s NOVA-v1.4.0-FULL-SOURCE/android/app/src/main/java/com/nova/anime/PlayerActivity.kt
+          test -s NOVA-v1.4.0-FULL-SOURCE/android/app/build.gradle.kts
+          test -s NOVA-v1.4.0-FULL-SOURCE/SOURCE_CODE_BN.md
+          echo "NOVA source package prepared:"
+          find NOVA-v1.4.0-FULL-SOURCE -type f | sort
+          du -sh NOVA-v1.4.0-FULL-SOURCE
+
+      - name: Upload complete source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-v1.4.0-FULL-SOURCE-ZIP
+          path: NOVA-v1.4.0-FULL-SOURCE/
+          if-no-files-found: error
+          retention-days: 30
