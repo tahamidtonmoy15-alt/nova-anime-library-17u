@@ -1,5 +1,5 @@
 // NOVA service worker — bump CACHE on every release so users always get the newest files.
-const CACHE = 'nova-shell-v18-native-vlc';
+const CACHE = 'nova-shell-v19-kotlin-player';
 const FONTS = 'anime-glass-fonts-v1';
 const CORE = ['./', './index.html', './manifest.webmanifest', './hero.webp', './favicon.png', './apple-touch-icon.png', './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 
