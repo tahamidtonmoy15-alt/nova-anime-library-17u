@@ -60,10 +60,13 @@ class MainActivity : AppCompatActivity() {
                     fileCallback?.onReceiveValue(null)
                     fileCallback = callback
                     val accepted = params.acceptTypes.orEmpty().joinToString(",").lowercase(Locale.ROOT)
-                    pendingVideoPicker = accepted.contains("video/") ||
+                    // WebView may report an empty or vendor-specific MIME type for MKV/AVI.
+                    // Treat an unspecified accept list as a video selection and allow all MIME
+                    // types; the web UI validates the selected file extension before importing.
+                    pendingVideoPicker = accepted.isBlank() || accepted.contains("video/") ||
                         listOf(".mkv", ".avi", ".mp4", ".mov", ".webm", ".m4v").any { accepted.contains(it) }
                     val types = if (pendingVideoPicker) {
-                        arrayOf("video/*", "application/octet-stream")
+                        arrayOf("*/*")
                     } else {
                         arrayOf("text/vtt", "application/x-subrip", "text/plain", "application/octet-stream")
                     }
@@ -118,9 +121,14 @@ class MainActivity : AppCompatActivity() {
         val file = java.io.File(path)
         if (!file.isFile || file.length() <= 0L) return false
         runOnUiThread {
-            startActivity(Intent(this, PlayerActivity::class.java)
-                .putExtra(PlayerActivity.EXTRA_PATH, file.absolutePath)
-                .putExtra(PlayerActivity.EXTRA_TITLE, title))
+            try {
+                startActivity(Intent(this, PlayerActivity::class.java)
+                    .putExtra(PlayerActivity.EXTRA_PATH, file.absolutePath)
+                    .putExtra(PlayerActivity.EXTRA_TITLE, title))
+            } catch (e: Exception) {
+                Toast.makeText(this, "NOVA Player চালু হয়নি: ${e.message}", Toast.LENGTH_LONG).show()
+                android.util.Log.e("NOVA", "Unable to launch native player", e)
+            }
         }
         return true
     }
@@ -161,7 +169,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun register(key: String): Boolean {
-        val uri = selectedUri() ?: return false
+        val uri = selectedUri()
+        if (uri == null) {
+            runOnUiThread {
+                Toast.makeText(this, "ভিডিও ফাইলের URI পাওয়া যায়নি। আবার Choose Video চাপো।", Toast.LENGTH_LONG).show()
+            }
+            return false
+        }
         return try {
             NativeVideoStore.importVideo(this, uri, key)
             true
