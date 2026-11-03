@@ -1,35 +1,83 @@
 name: NOVA Android APK
+
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main, master]
     paths:
+      - 'app/**'
       - 'android/**'
+      - 'src/**'
+      - '*.gradle'
+      - '*.gradle.kts'
+      - 'settings.gradle'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
       - '.github/workflows/android-apk.yml'
+
 permissions:
   contents: read
+
+concurrency:
+  group: nova-android-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-debug-apk:
+  build:
+    name: Build installable debug APK
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout source
         uses: actions/checkout@v4
-      - name: Set up Java 17
+
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Set up Gradle
+          cache: gradle
+
+      - name: Set up Gradle 8.11.1
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.11.1'
+
+      - name: Detect Android project folder
+        id: project
+        shell: bash
+        run: |
+          if [[ -f "settings.gradle.kts" || -f "settings.gradle" ]]; then
+            echo "dir=." >> "$GITHUB_OUTPUT"
+            echo "Found Android Gradle project at repository root."
+          elif [[ -f "android/settings.gradle.kts" || -f "android/settings.gradle" ]]; then
+            echo "dir=android" >> "$GITHUB_OUTPUT"
+            echo "Found Android Gradle project in android/."
+          else
+            echo "::error::Could not find settings.gradle or settings.gradle.kts at repository root or android/."
+            exit 1
+          fi
+
       - name: Build debug APK
-        working-directory: android
-        run: gradle assembleDebug --stacktrace
-      - name: Upload APK
+        shell: bash
+        run: |
+          PROJECT_DIR="${{ steps.project.outputs.dir }}"
+          if [[ -x "$PROJECT_DIR/gradlew" ]]; then
+            (cd "$PROJECT_DIR" && ./gradlew --no-daemon --stacktrace :app:assembleDebug)
+          else
+            gradle --no-daemon --stacktrace -p "$PROJECT_DIR" :app:assembleDebug
+          fi
+
+      - name: Verify APK output
+        shell: bash
+        run: |
+          APK_PATH="${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK_PATH" || { echo "::error::APK was not generated: $APK_PATH"; exit 1; }
+          ls -lh "$APK_PATH"
+
+      - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
-          name: NOVA-LibVLC-debug
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: NOVA-debug-APK
+          path: ${{ steps.project.outputs.dir }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 14
