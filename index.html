@@ -553,6 +553,7 @@ body.player-open #playerBg,body.player-open #playerBg *{animation-play-state:run
 .reel-card{overflow:hidden;border-radius:24px;border:1px solid rgba(220,180,255,.18);background:linear-gradient(150deg,rgba(255,255,255,.08),rgba(255,255,255,.025));box-shadow:0 18px 44px -26px #000, inset 0 1px 0 rgba(255,255,255,.08);contain:content}
 .reel-media{position:relative;aspect-ratio:9/16;max-height:min(72vh,680px);background:#05030b;overflow:hidden;border-radius:22px 22px 0 0}
 .reel-media video{width:100%;height:100%;object-fit:contain;background:#05030b;display:block}
+.reel-native-preview{width:100%;height:100%;display:grid;place-content:center;gap:12px;text-align:center;background:radial-gradient(ellipse at 50% 35%,rgba(147,51,234,.34),transparent 55%),linear-gradient(160deg,#18072c,#05030b);cursor:pointer}.reel-native-preview .reel-native-icon{width:76px;height:76px;border-radius:50%;display:grid;place-items:center;margin:auto;background:linear-gradient(135deg,#c026d3,#2563eb);box-shadow:0 12px 40px rgba(168,85,247,.38);font-size:30px;color:white}.reel-native-preview span:last-child{color:#d9c5f5;font-size:12px;font-weight:700;letter-spacing:.05em}
 .reel-media video::-webkit-media-controls-panel{background:linear-gradient(transparent,rgba(0,0,0,.7))}
 .reel-overlay{position:absolute;left:12px;right:12px;bottom:12px;display:flex;align-items:end;justify-content:space-between;gap:8px;pointer-events:none}.reel-category{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;padding:6px 9px;border-radius:99px;background:rgba(24,5,42,.72);border:1px solid rgba(255,255,255,.2);backdrop-filter:blur(8px)}
 .reel-meta{padding:13px 14px 14px}.reel-caption{font-size:13px;font-weight:600;line-height:1.5;margin:0 0 8px;overflow-wrap:anywhere}.reel-tags{color:var(--ice);font-size:11px;overflow-wrap:anywhere}.reel-actions{display:flex;gap:7px;margin-top:12px;flex-wrap:wrap}.reel-actions button{flex:1;min-width:72px;padding:8px 9px;font-size:11px}.reel-actions .is-on{color:#f0abfc;border-color:rgba(217,70,239,.55);background:rgba(217,70,239,.14)}.reel-actions .reel-delete{flex:0 0 auto;color:#fda4af;border-color:rgba(251,113,133,.25)}
@@ -1117,7 +1118,34 @@ function manageReelCategories(){const old=reelCategories().join(', '),v=prompt('
 function openReelAdd(){fillReelCategories();document.getElementById('reelFile').value='';document.getElementById('reelCaption').value='';document.getElementById('reelTags').value='';document.getElementById('reelAddBg').style.display='grid';}
 function closeReelAdd(){document.getElementById('reelAddBg').style.display='none';}
 function getAllReels(){return new Promise((resolve,reject)=>{const req=mediaDB.transaction('reels','readonly').objectStore('reels').getAll();req.onsuccess=()=>resolve(req.result||[]);req.onerror=()=>reject(req.error);});}
-async function saveAnimeReel(){const input=document.getElementById('reelFile'),file=input.files&&input.files[0];if(!file){toast('Choose a video first.');return;}if(!file.type.startsWith('video/')&&!/\.(mkv|avi|mov|mp4|webm|m4v)$/i.test(file.name)){toast('Choose a valid video file.');return;}const btn=document.getElementById('saveReelBtn');btn.disabled=true;btn.textContent='Saving…';try{await openMediaDB();const id='reel_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);const caption=document.getElementById('reelCaption').value.trim(),category=document.getElementById('reelCategoryInput').value||'Other',tags=document.getElementById('reelTags').value.trim();const rec={id,blob:file,name:file.name,type:file.type||'video/mp4',size:file.size,caption,category,tags,added:Date.now(),liked:false,saved:false};await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('reels','readwrite');tx.objectStore('reels').add(rec);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error('Storage quota exceeded'));});closeReelAdd();await renderReels();toast('Reel saved inside NOVA.');}catch(e){console.error(e);toast('Could not save Reel. Check NOVA storage space.');}finally{btn.disabled=false;btn.textContent='Save Reel';}}
+async function saveAnimeReel(){
+ const input=document.getElementById('reelFile'),file=input.files&&input.files[0];
+ if(!file){toast('Choose a video first.');return;}
+ if(!file.type.startsWith('video/')&&!/\.(mkv|avi|mov|mp4|webm|m4v)$/i.test(file.name)){toast('Choose a valid video file.');return;}
+ const btn=document.getElementById('saveReelBtn');btn.disabled=true;btn.textContent='Saving…';
+ try{
+  await openMediaDB();
+  const id='reel_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8);
+  const caption=document.getElementById('reelCaption').value.trim(),category=document.getElementById('reelCategoryInput').value||'Other',tags=document.getElementById('reelTags').value.trim();
+  let nativeLinked=false;
+  if(window.NovaAndroid&&typeof window.NovaAndroid.registerReelVideo==='function'){
+   nativeLinked=window.NovaAndroid.registerReelVideo(id)===true;
+   if(!nativeLinked)throw new Error('NOVA could not copy the Reel into its video library. Check free storage and try again.');
+  }
+  const rec={id,blob:nativeLinked?null:file,nativeLinked,name:file.name,type:file.type||'video/mp4',size:file.size,caption,category,tags,added:Date.now(),liked:false,saved:false};
+  await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('reels','readwrite');tx.objectStore('reels').add(rec);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error('Storage quota exceeded'));});
+  closeReelAdd();await renderReels();toast(nativeLinked?'Reel saved. Tap the video to play inside NOVA.':'Reel saved inside NOVA.');
+ }catch(e){console.error(e);toast('Could not save Reel: '+(e&&e.message?e.message:'Check available storage.'));}
+ finally{btn.disabled=false;btn.textContent='Save Reel';}
+}
+function playReelNative(id){
+ if(window.NovaAndroid&&typeof window.NovaAndroid.playReelVideo==='function'){
+  const ok=window.NovaAndroid.playReelVideo(id);
+  if(!ok)toast('This Reel is not linked to the NOVA player. Delete and upload it again.');
+  return;
+ }
+ toast('Open this Reel in the NOVA Android app to use the built-in player.');
+}
 function revokeReelUrls(){reelUrls.forEach(u=>{try{URL.revokeObjectURL(u);}catch(e){}});reelUrls=[];if(reelObserver){reelObserver.disconnect();reelObserver=null;}}
 async function renderReels(){
  const feed=document.getElementById('reelsFeed');if(!feed)return;
@@ -1129,34 +1157,37 @@ async function renderReels(){
  document.getElementById('reelCount').textContent=rows.length+' Reel'+(rows.length===1?'':'s');
  revokeReelUrls();
  if(!rows.length){feed.innerHTML='<div class="reels-empty glass"><div class="reels-empty-icon">▶</div><h3>'+(reelRowsCache.length?'No Reels in this category':'Your Anime Reels start here')+'</h3><p>'+(reelRowsCache.length?'Choose another category or upload a new Reel.':'Upload a short anime clip to build your private offline feed.')+'</p><button class="btn primary" onclick="openReelAdd()">Upload Reel</button></div>';return;}
+ const nativeBridge=!!(window.NovaAndroid&&typeof window.NovaAndroid.playReelVideo==='function');
  feed.innerHTML=rows.map(r=>{
-  const u=URL.createObjectURL(r.blob);reelUrls.push(u);
-  return '<article class="reel-card" data-reel-id="'+esc(r.id)+'">'+
-   '<div class="reel-media"><video src="'+u+'" playsinline webkit-playsinline preload="metadata" muted loop onclick="toggleReelPlayback(this)"></video></div>'+
+  const safeId=esc(r.id);
+  const media=(nativeBridge&&r.nativeLinked)
+   ? '<div class="reel-media" role="button" tabindex="0" onclick="playReelNative(\''+safeId+'\')" onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();playReelNative(\''+safeId+'\')}"><div class="reel-native-preview"><span class="reel-native-icon">▶</span><span>PLAY INSIDE NOVA</span></div></div>'
+   : (r.blob ? (function(){const u=URL.createObjectURL(r.blob);reelUrls.push(u);return '<div class="reel-media"><video src="'+u+'" playsinline webkit-playsinline preload="metadata" muted loop onclick="toggleReelPlayback(this)"></video></div>';})()
+      : '<div class="reel-media"><div class="reel-native-preview"><span class="reel-native-icon">!</span><span>RE-UPLOAD TO ENABLE PLAYBACK</span></div></div>');
+  return '<article class="reel-card" data-reel-id="'+safeId+'">'+media+
    '<div class="reel-topbar"><button onclick="switchView(\'home\')" aria-label="Back">‹</button><button onclick="openReelAdd()" aria-label="Upload Reel">＋</button></div>'+
    '<div class="reel-meta"><div class="reel-creator"><b>NOVA Anime</b><button data-action="follow" class="'+(localStorage.getItem('novaReelFollowed')==='1'?'is-on':'')+'" onclick="toggleReelFollow(this)">Follow</button></div><p class="reel-caption">'+esc(r.caption||r.name||'Anime Reel')+'</p>'+(r.tags?'<div class="reel-tags">'+esc(r.tags)+'</div>':'')+'<div class="reel-category">'+esc(r.category||'Anime')+'</div></div>'+
    '<div class="reel-actions">'+
-    '<button data-action="like" class="'+(r.liked?'is-on':'')+'" aria-label="Like" onclick="toggleReelFlag(\''+esc(r.id)+'\',\'liked\')">'+(r.liked?'Liked':'Like')+'</button>'+
-    '<button data-action="comment" aria-label="Comment" onclick="commentReel(\''+esc(r.id)+'\')">Comment</button>'+
-    '<button data-action="share" aria-label="Share" onclick="shareReel(\''+esc(r.id)+'\')">Share</button>'+
-    '<button data-action="save" class="'+(r.saved?'is-on':'')+'" aria-label="Save" onclick="toggleReelFlag(\''+esc(r.id)+'\',\'saved\')">'+(r.saved?'Saved':'Save')+'</button>'+
-    '<button data-action="sound" aria-label="Toggle sound" onclick="toggleReelSound(this)">Sound</button>'+
-    '<button data-action="delete" class="reel-delete" aria-label="Delete" onclick="deleteAnimeReel(\''+esc(r.id)+'\')">Delete</button>'+
+    '<button data-action="like" class="'+(r.liked?'is-on':'')+'" aria-label="Like" onclick="toggleReelFlag(\''+safeId+'\',\'liked\')">'+(r.liked?'Liked':'Like')+'</button>'+
+    '<button data-action="comment" aria-label="Comment" onclick="commentReel(\''+safeId+'\')">Comment</button>'+
+    '<button data-action="share" aria-label="Share" onclick="shareReel(\''+safeId+'\')">Share</button>'+
+    '<button data-action="save" class="'+(r.saved?'is-on':'')+'" aria-label="Save" onclick="toggleReelFlag(\''+safeId+'\',\'saved\')">'+(r.saved?'Saved':'Save')+'</button>'+
+    '<button data-action="sound" aria-label="Play with sound" onclick="toggleReelSound(this)">Sound</button>'+
+    '<button data-action="delete" class="reel-delete" aria-label="Delete" onclick="deleteAnimeReel(\''+safeId+'\')">Delete</button>'+
    '</div></article>';
  }).join('');
- if('IntersectionObserver'in window){
+ if(!nativeBridge&&'IntersectionObserver'in window){
   reelObserver=new IntersectionObserver(entries=>entries.forEach(en=>{
    const v=en.target.querySelector('video');if(!v)return;
-   if(en.isIntersecting&&en.intersectionRatio>.72){
-    feed.querySelectorAll('.reel-card video').forEach(x=>{if(x!==v){x.pause();x.muted=true;}});
-    v.play().catch(()=>{});
-   }else v.pause();
+   if(en.isIntersecting&&en.intersectionRatio>.72){feed.querySelectorAll('.reel-card video').forEach(x=>{if(x!==v){x.pause();x.muted=true;}});v.play().catch(()=>{});}
+   else v.pause();
   }),{threshold:[.2,.72,.95]});
   feed.querySelectorAll('.reel-card').forEach(c=>reelObserver.observe(c));
  }
 }
 async function toggleReelSound(button){
- const card=button.closest('.reel-card'),v=card&&card.querySelector('video');if(!v)return;
+ const card=button.closest('.reel-card'),v=card&&card.querySelector('video');
+ if(!v){const id=card&&card.dataset.reelId;if(id)playReelNative(id);return;}
  v.muted=!v.muted;button.classList.toggle('is-on',!v.muted);
  if(!v.paused)try{await v.play();}catch(e){}
 }
@@ -1177,7 +1208,7 @@ async function shareReel(id){
 async function toggleReelFlag(id,field){try{await openMediaDB();const r=reelRowsCache.find(x=>x.id===id);if(!r)return;r[field]=!r[field];await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('reels','readwrite');tx.objectStore('reels').put(r);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});const card=document.querySelector('[data-reel-id="'+CSS.escape(id)+'"]');const button=card&&card.querySelector('[data-action="'+(field==='liked'?'like':'save')+'"]');if(button){button.classList.toggle('is-on',!!r[field]);button.textContent=field==='liked'?(r[field]?'Liked':'Like'):(r[field]?'Saved':'Save');}toast(field==='liked'?(r[field]?'Added to Likes':'Removed from Likes'):(r[field]?'Saved':'Removed from Saved'));}catch(e){toast('Could not update Reel.');}}
 function toggleReelFollow(button){const next=localStorage.getItem('novaReelFollowed')!=='1';localStorage.setItem('novaReelFollowed',next?'1':'0');button.classList.toggle('is-on',next);button.textContent=next?'Following':'Follow';toast(next?'Following NOVA Anime on this device':'Unfollowed NOVA Anime');}
 function toggleReelPlayback(video){if(!video)return;if(video.paused)video.play().catch(()=>{});else video.pause();}
-async function deleteAnimeReel(id){const r=reelRowsCache.find(x=>x.id===id);if(!r)return;if(!confirm('Permanently delete this Reel from NOVA? Its '+formatBytes(r.size||0)+' storage will be freed.'))return;try{await openMediaDB();await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('reels','readwrite');tx.objectStore('reels').delete(id);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});await renderReels();toast('Reel deleted from NOVA storage.');}catch(e){toast('Could not delete this Reel.');}}
+async function deleteAnimeReel(id){const r=reelRowsCache.find(x=>x.id===id);if(!r)return;if(!confirm('Permanently delete this Reel from NOVA? Its '+formatBytes(r.size||0)+' storage will be freed.'))return;try{await openMediaDB();await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('reels','readwrite');tx.objectStore('reels').delete(id);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});try{if(window.NovaAndroid&&typeof window.NovaAndroid.forgetReelVideo==='function')window.NovaAndroid.forgetReelVideo(id);}catch(nativeError){}await renderReels();toast('Reel deleted from NOVA storage.');}catch(e){toast('Could not delete this Reel.');}}
 
 // Offline PWA + IndexedDB video vault. Files are copied into browser storage.
 const DB_NAME='anime-glass-media', DB_VERSION=2;
@@ -1188,8 +1219,25 @@ function mediaStore(mode='readonly'){return mediaDB.transaction('videos',mode).o
 function getAllVideos(){return new Promise((resolve,reject)=>{const r=mediaStore().getAll();r.onsuccess=()=>resolve(r.result||[]);r.onerror=()=>reject(r.error);});}
 async function refreshVideoRecords(){try{await openMediaDB();const all=await getAllVideos();videoRecords=Object.fromEntries(all.map(x=>[x.key,x]));}catch(e){console.error(e);toast('Offline storage is unavailable. Open NOVA from a secure HTTPS website in Chrome.');}}
 function chooseEpisodeVideo(id,s,e){pendingVideoTarget={id,s,e};const input=document.getElementById('episodeVideoPicker');input.value='';input.click();}
-async function handleEpisodeVideo(ev){const file=ev.target.files&&ev.target.files[0],target=pendingVideoTarget;if(!file||!target)return; if(!file.type.startsWith('video/')&&!/\.(mkv|avi|mov|mp4|webm)$/i.test(file.name)){toast('Please select a valid video file.');return;} if(file.size>4*1024*1024*1024){toast('This version does not accept a single file larger than 4 GB.');return;} try{await openMediaDB();const key=videoKey(target.id,target.s,target.e);await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('videos','readwrite');tx.objectStore('videos').put({key,blob:file,name:file.name,type:file.type||'video/mp4',size:file.size,added:Date.now()});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error('Storage quota exceeded'));});let nativeLinked=false;try{if(window.NovaAndroid&&typeof window.NovaAndroid.registerEpisodeVideo==='function')nativeLinked=window.NovaAndroid.registerEpisodeVideo(key)===true;}catch(nativeError){console.warn('Native video link:',nativeError);}await refreshVideoRecords();openWatchingDetail(target.id);toast(nativeLinked?'Video saved and linked to NOVA Player. Tap Play.':'Video saved to NOVA. On first Play, select this original file once to link the built-in player.');sniffMedia(file).then(info=>{const d=diagnoseMedia(info);if(d.problems.length)toast('Video saved. NOVA will use its built-in VLC player for this file.');}).catch(()=>{});}catch(err){console.error(err);toast('Could not save video. Check available phone storage and try a smaller file.');}}
-async function removeEpisodeVideo(id,s,e){if(!confirm('Delete the saved video for this episode?'))return;const key=videoKey(id,s,e);try{await openMediaDB();await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('videos','readwrite');tx.objectStore('videos').delete(key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});try{if(window.NovaAndroid&&typeof window.NovaAndroid.forgetEpisodeVideo==='function')window.NovaAndroid.forgetEpisodeVideo(key);}catch(nativeError){}await refreshVideoRecords();openWatchingDetail(id);}catch(err){toast('Could not delete the video.');}}
+async function handleEpisodeVideo(ev){
+ const file=ev.target.files&&ev.target.files[0],target=pendingVideoTarget;
+ if(!file||!target)return;
+ if(!file.type.startsWith('video/')&&!/\.(mkv|avi|mov|mp4|webm)$/i.test(file.name)){toast('Please select a valid video file.');return;}
+ if(file.size>4*1024*1024*1024){toast('This version does not accept a single file larger than 4 GB.');return;}
+ try{
+  await openMediaDB();
+  const key=videoKey(target.id,target.s,target.e);
+  let nativeLinked=false;
+  if(window.NovaAndroid&&typeof window.NovaAndroid.registerEpisodeVideo==='function'){
+   nativeLinked=window.NovaAndroid.registerEpisodeVideo(key)===true;
+   if(!nativeLinked)throw new Error('NOVA could not copy the selected video. Check phone storage and select it again.');
+  }
+  await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('videos','readwrite');tx.objectStore('videos').put({key,blob:nativeLinked?null:file,nativeLinked,name:file.name,type:file.type||'video/mp4',size:file.size,added:Date.now()});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error('Storage quota exceeded'));});
+  await refreshVideoRecords();openWatchingDetail(target.id);
+  toast(nativeLinked?'Video saved in NOVA Player storage. Tap Play Video.':'Video saved inside NOVA.');
+  if(!nativeLinked)sniffMedia(file).then(info=>{const d=diagnoseMedia(info);if(d.problems.length)toast('This browser may not support the video codec.');}).catch(()=>{});
+ }catch(err){console.error(err);toast('Could not save video: '+(err&&err.message?err.message:'Check available storage and try again.'));}
+}async function removeEpisodeVideo(id,s,e){if(!confirm('Delete the saved video for this episode?'))return;const key=videoKey(id,s,e);try{await openMediaDB();await new Promise((resolve,reject)=>{const tx=mediaDB.transaction('videos','readwrite');tx.objectStore('videos').delete(key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});try{if(window.NovaAndroid&&typeof window.NovaAndroid.forgetEpisodeVideo==='function')window.NovaAndroid.forgetEpisodeVideo(key);}catch(nativeError){}await refreshVideoRecords();openWatchingDetail(id);}catch(err){toast('Could not delete the video.');}}
 let currentRecord=null;
 async function playEpisode(id,s,e){
  const item=watchingList.find(x=>x.id===id),record=videoRecords[videoKey(id,s,e)];
