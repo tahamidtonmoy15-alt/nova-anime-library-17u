@@ -31,12 +31,21 @@ import org.videolan.libvlc.util.VLCVideoLayout;
 import java.util.ArrayList;
 import java.util.Locale;
 import android.content.SharedPreferences;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.UUID;
 
 public class MainActivity extends Activity {
     private static final int PICK_VIDEO = 4102;
     private static final int PICK_WEB_FILE = 4103;
     private static final String PREFS_NAME = "nova_episode_media";
     private static final String PREF_PREFIX = "episode_uri:";
+    private static final String REEL_PREFIX = "reel_uri:";
     private static final String NOVA_URL = "https://tahamidtonmoy15-alt.github.io/nova-anime-library-17u/";
     private static final String LEGACY_NOVA_URL = "https://cdtc1127l-cmyk.github.io/anime-f/";
 
@@ -305,58 +314,194 @@ public class MainActivity extends Activity {
     }
 
     private void openEpisodeInVlc(String key) {
-        String saved = mediaPrefs().getString(episodePrefKey(key), null);
+        String prefKey = episodePrefKey(key);
+        String saved = mediaPrefs().getString(prefKey, null);
         try {
             ensureVlc();
             buildPlayerUi();
             if (saved != null) {
-                Uri uri = Uri.parse(saved);
-                // Validate the stored grant before handing it to VLC. This catches removed
-                // files and revoked Android document permissions instead of leaving a black screen.
-                try (android.os.ParcelFileDescriptor probe = getContentResolver().openFileDescriptor(uri, "r")) {
-                    if (probe == null) throw new IllegalStateException("The selected video file is no longer available.");
-                } catch (Exception accessError) {
-                    mediaPrefs().edit().remove(episodePrefKey(key)).apply();
-                    saved = null;
-                    playerStatus.setText("The original file permission expired. Select the episode file again.");
+                File storedFile = new File(saved);
+                if (storedFile.isFile()) {
+                    playNativeUri(Uri.fromFile(storedFile));
+                    return;
                 }
+                // Migrate old installs which saved content:// document links instead of a
+                // private NOVA copy. The copy is made off the UI thread before VLC opens it.
+                if (saved.startsWith("content://")) {
+                    playNativeUri(Uri.parse(saved), prefKey);
+                    return;
+                }
+                mediaPrefs().edit().remove(prefKey).apply();
             }
-            if (saved != null) {
-                playNativeUri(Uri.parse(saved));
-            } else {
-                playerStatus.setText("Select the original video file for this episode once. It will be linked to this episode.");
-                pendingEpisodeKey = key;
-                chooseVideo();
-            }
+            playerStatus.setText("Select the episode video once. NOVA will save a private copy for reliable playback.");
+            pendingEpisodeKey = key;
+            chooseVideo();
         } catch (Exception e) {
             Toast.makeText(this, "NOVA player could not start: " + e.getMessage(), Toast.LENGTH_LONG).show();
             if (showingPlayer) returnHome();
         }
     }
 
+    private void openReelInVlc(String id) {
+        String saved = mediaPrefs().getString(REEL_PREFIX + id, null);
+        if (saved == null || !new File(saved).isFile()) {
+            Toast.makeText(this, "This Reel has no NOVA video copy. Delete and upload it again.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        try {
+            ensureVlc();
+            buildPlayerUi();
+            playNativeUri(Uri.fromFile(new File(saved)));
+        } catch (Exception e) {
+            Toast.makeText(this, "NOVA player could not start: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            if (showingPlayer) returnHome();
+        }
+    }
+
+    private String displayName(Uri uri) {
+        String name = "Selected video";
+        try (android.database.Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int col = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (col >= 0 && cursor.getString(col) != null) name = cursor.getString(col);
+            }
+        } catch (Exception ignored) { }
+        if ("Selected video".equals(name) && uri.getLastPathSegment() != null) name = uri.getLastPathSegment();
+        return name;
+    }
+
+    private File copyUriToPrivateStorage(Uri uri) throws Exception {
+        if ("file".equalsIgnoreCase(uri.getScheme())) {
+            File sourceFile = new File(uri.getPath());
+            String privateRoot = getFilesDir().getCanonicalPath() + File.separator;
+            if (sourceFile.isFile() && sourceFile.getCanonicalPath().startsWith(privateRoot)) return sourceFile;
+        }
+
+        String originalName = displayName(uri);
+        String safeName = originalName.replaceAll("[^A-Za-z0-9._ -]", "_").trim();
+        if (safeName.isEmpty()) safeName = "video";
+        if (safeName.length() > 100) safeName = safeName.substring(safeName.length() - 100);
+        File folder = new File(getFilesDir(), "nova_media");
+        if (!folder.exists() && !folder.mkdirs()) throw new IllegalStateException("Cannot create NOVA video storage");
+        File destination = new File(folder, UUID.randomUUID() + "_" + safeName);
+        InputStream raw = "file".equalsIgnoreCase(uri.getScheme())
+                ? new FileInputStream(new File(uri.getPath()))
+                : getContentResolver().openInputStream(uri);
+        if (raw == null) throw new IllegalStateException("Android could not read the selected video");
+        boolean success = false;
+        try (InputStream input = new BufferedInputStream(raw);
+             OutputStream output = new BufferedOutputStream(new FileOutputStream(destination))) {
+            byte[] buffer = new byte[1024 * 1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            output.flush();
+            success = destination.isFile() && destination.length() > 0;
+        } finally {
+            if (!success) destination.delete();
+        }
+        if (!success) throw new IllegalStateException("The copied video is empty or incomplete");
+        return destination;
+    }
+
+    private boolean isPrivateVideoFile(Uri uri) {
+        if (!"file".equalsIgnoreCase(uri.getScheme())) return false;
+        try {
+            File file = new File(uri.getPath());
+            String root = getFilesDir().getCanonicalPath() + File.separator;
+            return file.isFile() && file.getCanonicalPath().startsWith(root);
+        } catch (Exception ignored) { return false; }
+    }
+
     private void playNativeUri(Uri uri) {
+        playNativeUri(uri, null);
+    }
+
+    private void playNativeUri(Uri uri, String preferenceKey) {
         try {
             ensureVlc();
             if (!showingPlayer) buildPlayerUi();
-            Media media = new Media(libVLC, uri);
-            media.addOption(":network-caching=1200");
-            mediaPlayer.setMedia(media);
-            media.release();
-            mediaPlayer.play();
-            String name = "Selected video";
-            try (android.database.Cursor cursor = getContentResolver().query(uri, null, null, null, null)) {
-                if (cursor != null && cursor.moveToFirst()) {
-                    int col = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-                    if (col >= 0) name = cursor.getString(col);
+            String name = displayName(uri);
+            if (isPrivateVideoFile(uri)) {
+                beginNativePlayback(uri, name);
+                return;
+            }
+
+            if (playerStatus != null) playerStatus.setText("Saving a private copy in NOVA…");
+            new Thread(() -> {
+                try {
+                    File localCopy = copyUriToPrivateStorage(uri);
+                    if (preferenceKey != null) {
+                        mediaPrefs().edit().putString(preferenceKey, localCopy.getAbsolutePath()).apply();
+                    }
+                    runOnUiThread(() -> beginNativePlayback(Uri.fromFile(localCopy), name));
+                } catch (Exception error) {
+                    android.util.Log.e("NOVA", "Could not import selected video " + uri, error);
+                    runOnUiThread(() -> {
+                        if (playerStatus != null) playerStatus.setText("Could not copy this video: " + error.getMessage());
+                        Toast.makeText(MainActivity.this, "NOVA could not copy this file. Check free storage and file access.", Toast.LENGTH_LONG).show();
+                    });
                 }
-            } catch (Exception ignored) { }
-            if (playerStatus != null) playerStatus.setText("Playing in NOVA: " + name);
-            handler.removeCallbacks(progressUpdater);
-            handler.post(progressUpdater);
+            }, "NOVA-video-import").start();
         } catch (Exception error) {
             if (playerStatus != null) playerStatus.setText("Could not open video: " + error.getMessage());
             android.util.Log.e("NOVA", "LibVLC failed to open " + uri, error);
-            Toast.makeText(this, "Could not open this video file. Try selecting it again.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "NOVA could not open this video. Try selecting it again.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void beginNativePlayback(Uri localUri, String name) {
+        try {
+            if (mediaPlayer == null) ensureVlc();
+            Media media = new Media(libVLC, localUri);
+            media.addOption(":file-caching=1000");
+            media.addOption(":network-caching=1500");
+            media.addOption(":no-video-title-show");
+            mediaPlayer.stop();
+            mediaPlayer.setMedia(media);
+            media.release();
+            mediaPlayer.play();
+            if (playerStatus != null) playerStatus.setText("NOVA Player · " + name);
+            handler.removeCallbacks(progressUpdater);
+            handler.post(progressUpdater);
+        } catch (Exception error) {
+            if (playerStatus != null) playerStatus.setText("Could not start playback: " + error.getMessage());
+            android.util.Log.e("NOVA", "LibVLC playback start failed for " + localUri, error);
+            Toast.makeText(this, "NOVA could not start this video. The file may be damaged or use an unsupported codec.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private boolean registerPickedMedia(String preferenceKey) {
+        Uri picked = lastPickedVideoUri;
+        if (picked == null) return false;
+        lastPickedVideoUri = null;
+        try {
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Copying video into NOVA storage…", Toast.LENGTH_SHORT).show());
+            File localCopy = copyUriToPrivateStorage(picked);
+            String old = mediaPrefs().getString(preferenceKey, null);
+            mediaPrefs().edit().putString(preferenceKey, localCopy.getAbsolutePath()).apply();
+            if (old != null && !old.equals(localCopy.getAbsolutePath())) {
+                File oldFile = new File(old);
+                String root = getFilesDir().getCanonicalPath() + File.separator;
+                if (oldFile.isFile() && oldFile.getCanonicalPath().startsWith(root)) oldFile.delete();
+            }
+            return true;
+        } catch (Exception error) {
+            android.util.Log.e("NOVA", "Could not save selected video for " + preferenceKey, error);
+            runOnUiThread(() -> Toast.makeText(MainActivity.this, "Video copy failed. Check phone storage and file permission.", Toast.LENGTH_LONG).show());
+            return false;
+        }
+    }
+
+    private void forgetStoredMedia(String preferenceKey) {
+        String saved = mediaPrefs().getString(preferenceKey, null);
+        mediaPrefs().edit().remove(preferenceKey).apply();
+        if (saved == null) return;
+        try {
+            File file = new File(saved);
+            String root = getFilesDir().getCanonicalPath() + File.separator;
+            if (file.isFile() && file.getCanonicalPath().startsWith(root)) file.delete();
+        } catch (Exception error) {
+            android.util.Log.w("NOVA", "Could not delete stored video copy", error);
         }
     }
 
@@ -392,11 +537,9 @@ public class MainActivity extends Activity {
         }
         Uri uri = data.getData();
         try { getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION); } catch (Exception ignored) { }
-        if (pendingEpisodeKey != null) {
-            mediaPrefs().edit().putString(episodePrefKey(pendingEpisodeKey), uri.toString()).apply();
-            pendingEpisodeKey = null;
-        }
-        playNativeUri(uri);
+        String episodeKey = pendingEpisodeKey;
+        pendingEpisodeKey = null;
+        playNativeUri(uri, episodeKey == null ? null : episodePrefKey(episodeKey));
     }
 
     private void returnHome() {
@@ -456,11 +599,7 @@ public class MainActivity extends Activity {
     private class NovaBridge {
         @JavascriptInterface public boolean registerEpisodeVideo(String key) {
             if (key == null || key.trim().isEmpty()) return false;
-            Uri picked = lastPickedVideoUri;
-            if (picked == null) return false;
-            mediaPrefs().edit().putString(episodePrefKey(key), picked.toString()).apply();
-            lastPickedVideoUri = null;
-            return true;
+            return registerPickedMedia(episodePrefKey(key));
         }
         @JavascriptInterface public boolean playEpisodeVideo(String key) {
             if (key == null || key.trim().isEmpty()) return false;
@@ -469,7 +608,20 @@ public class MainActivity extends Activity {
         }
         @JavascriptInterface public void forgetEpisodeVideo(String key) {
             if (key == null || key.trim().isEmpty()) return;
-            mediaPrefs().edit().remove(episodePrefKey(key)).apply();
+            forgetStoredMedia(episodePrefKey(key));
+        }
+        @JavascriptInterface public boolean registerReelVideo(String id) {
+            if (id == null || id.trim().isEmpty()) return false;
+            return registerPickedMedia(REEL_PREFIX + id);
+        }
+        @JavascriptInterface public boolean playReelVideo(String id) {
+            if (id == null || id.trim().isEmpty()) return false;
+            runOnUiThread(() -> openReelInVlc(id));
+            return true;
+        }
+        @JavascriptInterface public void forgetReelVideo(String id) {
+            if (id == null || id.trim().isEmpty()) return;
+            forgetStoredMedia(REEL_PREFIX + id);
         }
     }
 
