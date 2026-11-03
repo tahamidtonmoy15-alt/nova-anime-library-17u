@@ -207,7 +207,7 @@ class PlayerActivity : AppCompatActivity() {
             media.addOption(":file-caching=2000")
             player.media = media
             media.release()
-            player.volume = 100
+            player.setVolume(100)
             player.play()
             status.text = if (softwareOnly) "$title · Software decoding" else "$title · Opening…"
             ui.removeCallbacks(tick); ui.post(tick)
